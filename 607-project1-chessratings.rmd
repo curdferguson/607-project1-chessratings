@@ -1,0 +1,181 @@
+---
+title: "607-project1-chessratings"
+author: "Tyler Frankenberg"
+date: "2/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+```
+
+## Importing the Data
+
+We'll start by reading the raw data into a tibble.
+
+```{r}
+
+rawdata <- as_tibble(read.csv("https://raw.githubusercontent.com/curdferguson/607-project1-chessratings/main/tournamentinfo.txt", header = FALSE, stringsAsFactors = FALSE, sep = "|"))
+
+
+# thank you to Eric Hirsch for helping with this import framework
+```
+
+
+## Cleaniing the data
+
+To clean the data, we'll start by filtering out rows consisting of long strings of dashes.  Then we'll drop the 'header' rows and column 11.
+
+```{r}
+
+# filter out strings  of dashes
+rawdata <- rawdata %>% filter(rawdata$V1 != "-----------------------------------------------------------------------------------------")
+
+# slice out the first two "header" rows
+rawdata <- rawdata %>% slice(3:130)
+
+# filter out column 11
+rawdata <- rawdata %>% select(!V11)
+
+```
+
+
+Next, we'll trim white space from the beginning and end of the values in each column.
+
+```{r}
+
+# trim white space, one column at a time.
+
+rawdata$V1 <- rawdata$V1 %>% str_trim(side = c("both"))
+rawdata$V2 <- rawdata$V2 %>% str_trim(side = c("both"))
+rawdata$V3 <- rawdata$V3 %>% str_trim(side = c("both"))
+rawdata$V4 <- rawdata$V4 %>% str_trim(side = c("both"))
+rawdata$V5 <- rawdata$V5 %>% str_trim(side = c("both"))
+rawdata$V6 <- rawdata$V6 %>% str_trim(side = c("both"))
+rawdata$V7 <- rawdata$V7 %>% str_trim(side = c("both"))
+rawdata$V8 <- rawdata$V8 %>% str_trim(side = c("both"))
+rawdata$V9 <- rawdata$V9 %>% str_trim(side = c("both"))
+rawdata$V10 <- rawdata$V10 %>% str_trim(side = c("both"))
+
+```
+
+
+We need to further tidy this data by getting all of the information for each bowler on a single row.  The immediate distinction between the two rows is that one holds a row ID between 1-64, while the other does not.  We'll use this distinction as the basis to separate the even and odd rows out into separate tables, and then we'll join them back together into a new data frame we can proceed forward with.
+
+```{r}
+
+# create separate table for the "ID" rows and "non-ID" rows
+splitdata1 <- rawdata %>% filter(rawdata$V1 %in% 1:64, na.rm=TRUE)
+splitdata2 <- rawdata %>% filter(!rawdata$V1 %in% 1:64, na.rm=TRUE) %>% select(V1, V2)
+
+# join them back together in a new dataframe, and rename the columns
+joined_data <- bind_cols(splitdata1, splitdata2)
+names(joined_data) <- c("ID", "Name", "Total Score", "Opp 1", "Opp 2", "Opp 3", "Opp 4", "Opp 5", "Opp 6", "Opp 7", "State", "Pre-Rating")
+
+```
+We now need to drop the "W", "L", "D", and "H" values from the opponent columns, so that we retain an integer identifying the opponent we can use as the basis for looking up the opponent's score.
+
+```{r}
+
+# For eacch "opponent" column, replace with only the numerical value, and convert to type "integer".
+joined_data$`Opp 1` <- joined_data$`Opp 1` %>% 
+  str_match("[:digit:]{1,2}$") %>% 
+  as.integer()
+
+joined_data$`Opp 2` <- joined_data$`Opp 2` %>% 
+  str_match("[:digit:]{1,2}$") %>%
+  as.integer()
+
+joined_data$`Opp 3` <- joined_data$`Opp 3` %>% 
+  str_match("[:digit:]{1,2}$") %>%
+  as.integer()
+
+joined_data$`Opp 4` <- joined_data$`Opp 4` %>% 
+  str_match("[:digit:]{1,2}$") %>%
+  as.integer()
+
+joined_data$`Opp 5` <- joined_data$`Opp 5` %>% 
+  str_match("[:digit:]{1,2}$") %>%
+  as.integer()
+  
+joined_data$`Opp 6` <- joined_data$`Opp 6` %>% 
+  str_match("[:digit:]{1,2}$") %>%
+  as.integer()
+  
+joined_data$`Opp 7` <- joined_data$`Opp 7` %>% 
+  str_match("[:digit:]{1,2}$") %>%
+  as.integer()
+  
+```
+
+
+The peskiest column, Pre-Rating, can be handled with regex, but our str_match function gives us back a two-column matrix which can get us into trouble later.  We therefore make sure only to select the first, relevant column.
+
+```{r}
+
+#extract pre-rating from the raw column text
+joined_data$`Pre-Rating` <- joined_data$`Pre-Rating` %>%
+ str_match("(?<=R:( |  ))[:digit:]{3,4}")
+
+#select only the first column of the two-columnn matrix we are given back
+joined_data$`Pre-Rating` <- joined_data$`Pre-Rating`[,1]
+
+```
+
+
+Our last step with the "joined_data" table before computing Opponent Averages is to convert the remaining numeric values to the appropriate data types:
+
+
+```{r}
+
+# change data types to int or numeric as appropriate
+
+joined_data$`Pre-Rating` <- joined_data$`Pre-Rating` %>% as.integer()
+joined_data$`Total Score` <- joined_data$`Total Score` %>% as.numeric()
+
+```
+
+
+
+Finally, we need to compute our opponent's average pre-rating.  We'll do this by using the opponent IDs as lookup values through which we can transmute pre-ratings into a separate table.  PUtting them into a unique table lets us easily perform a row-wise mean function, which we store in a column that can be pulled back in with our original data.
+
+```{r}
+
+# transmute a new column for each opponent's pre-rating, using the opponent's column name as row lookup value.
+opponent_preratings <- joined_data %>% transmute(
+  Opp1Pre = joined_data$`Pre-Rating`[`Opp 1`],
+  Opp2Pre = joined_data$`Pre-Rating`[`Opp 2`],
+  Opp3Pre = joined_data$`Pre-Rating`[`Opp 3`],
+  Opp4Pre = joined_data$`Pre-Rating`[`Opp 4`],
+  Opp5Pre = joined_data$`Pre-Rating`[`Opp 5`],
+  Opp6Pre = joined_data$`Pre-Rating`[`Opp 6`],
+  Opp7Pre = joined_data$`Pre-Rating`[`Opp 7`])
+
+# mutate a column on this auxiliary table for the mean of each row.
+opponent_preratings <- opponent_preratings %>% mutate(
+  Opponent_Avg = rowMeans(opponent_preratings, na.rm = TRUE))
+
+# this becomes the "Opponent's Average" column in our "joined_data" table
+joined_data <- bind_cols(joined_data, opponent_preratings$`Opponent_Avg`)
+joined_data <- joined_data %>% rename(`Opponent Avg`=`...13`)
+joined_data$`Opponent Avg` <- joined_data$`Opponent Avg` %>% as.integer()
+
+
+```
+
+## Write data to CSV
+
+From the "joined_data" table, we'll pull just the 5 columns we need into a new tibble, from which we can write to .csv.
+
+
+```{r export-data}
+
+# create a final tibble with the 5 desired columns
+clean_data <- joined_data %>% select(Name, State, `Total Score`, `Pre-Rating`, `Opponent Avg`)
+
+#write to .csv - update filename string with your own target directory folder
+clean_data %>% write.csv("~/R/607/Major Assignments/607-project1-chessratings/607_Project1.csv", row.names = FALSE)
+
+```
